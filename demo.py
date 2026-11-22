@@ -8,13 +8,13 @@ from tempfile import TemporaryDirectory
 from cohort.amendments import amend
 from cohort.freeze import freeze, initialize_cohorts
 from cohort.revisions import RevisionStore
-from models.publish import fit, initialize_models, read_publication
+from models.publish import fit, initialize_models, publish_pool, read_publication
 from reports.compare import compare_reports
 from reports.export import export_report
-from reports.history import read
-from reports.issue import issue
-from reports.store import SignedReport, SignedReportStore
-from risk.accept import accept, initialize_risk
+from reports.history import read, read_pool_report
+from reports.issue import issue, issue_pool
+from reports.store import PoolReportStore, SignedReport, SignedReportStore
+from risk.accept import accept, accept_pool, initialize_risk
 from trials.batches import BatchStore
 from trials.completion import initialize_trials, record
 from trials.parents import InspectionStore
@@ -38,6 +38,7 @@ def initialize_receiver(connection: sqlite3.Connection) -> None:
     with connection:
         initialize_risk(connection)
         SignedReportStore(connection).initialize()
+        PoolReportStore(connection).initialize()
 
 
 def load_workday(connection: sqlite3.Connection) -> dict:
@@ -151,6 +152,90 @@ def run_workday() -> tuple[dict, dict]:
         return clearance_scenario, history_scenario
 
 
+def run_pool_shift() -> dict:
+    """Sign night-shift staffing from pooled documents after the source closes."""
+    from pool_fixture import load_pool_sample
+
+    with TemporaryDirectory(prefix='coating-pool-') as directory:
+        source_path = Path(directory) / 'pool-day.sqlite'
+        receiver_path = Path(directory) / 'pool-night.sqlite'
+        with closing(sqlite3.connect(source_path)) as source:
+            initialize_source(source)
+            samples = load_pool_sample(source)
+            texts = {}
+            for name in ('common_three', 'separate_pairs', 'swapped'):
+                ids = [cohort.cohort_id for cohort in samples[name]]
+                texts[name] = (ids, publish_pool(source, ids))
+
+        reports = {}
+        with closing(sqlite3.connect(receiver_path)) as receiver:
+            initialize_receiver(receiver)
+            for name in ('common_three', 'separate_pairs'):
+                ids, text = texts[name]
+                accepted_id = accept_pool(receiver, text)
+                reports[name] = issue_pool(receiver, accepted_id, ids, 'A', 1)
+            swapped_ids, swapped_text = texts['swapped']
+            swapped_accepted = accept_pool(receiver, swapped_text)
+            try:
+                issue_pool(receiver, swapped_accepted, swapped_ids[:2], 'A', 1)
+            except ValueError:
+                conflict_rejected = True
+            else:
+                conflict_rejected = False
+            partial = issue_pool(receiver, swapped_accepted, [swapped_ids[0], swapped_ids[2]], 'A', 1)
+            archived_id = reports['separate_pairs'].report_id
+
+        with closing(sqlite3.connect(receiver_path)) as receiver:
+            initialize_receiver(receiver)
+            archived = read_pool_report(receiver, archived_id)
+
+        threshold = Fraction(1, 4)
+        actual = {
+            name: [list(report.counts_a), list(report.counts_b), str(report.clearance),
+                   str(report.conditional_cooccurrence)]
+            for name, report in reports.items()
+        }
+        expected = {
+            'common_three': [[4, 0, 0, 1], [0, 1], '1', '1/5'],
+            'separate_pairs': [[3, 0, 0, 1], [0, 1], '1', '1/4'],
+        }
+        downstream_expected = {
+            'reserve_both': {'common_three': False, 'separate_pairs': True},
+            'conflict_rejected': True,
+            'partial_signs': '1/2',
+            'archived_match': True,
+        }
+        downstream_actual = {
+            'reserve_both': {
+                name: report.conditional_cooccurrence >= threshold
+                for name, report in reports.items()
+            },
+            'conflict_rejected': conflict_rejected,
+            'partial_signs': str(partial.conditional_cooccurrence),
+            'archived_match': archived == reports['separate_pairs'],
+        }
+        _verify(expected, actual, 'pooled staffing risk')
+        _verify(downstream_expected, downstream_actual, 'pooled staffing decisions')
+        return {
+            'case_id': 'v9',
+            'input': {
+                'scenarios': ['common_three', 'separate_pairs'],
+                'initial': 'A', 'round': 1, 'reserve_threshold': [1, 4],
+            },
+            'expected': expected,
+            'actual': actual,
+            'downstream_expected': downstream_expected,
+            'downstream_actual': downstream_actual,
+            'code_paths': ['models/pool.py', 'models/publish.py', 'risk/accept.py',
+                           'risk/evaluate.py', 'reports/issue.py', 'reports/history.py'],
+            'oracle': 'Both packages share single-cohort and pairwise-intersection counts, '
+                      'but pooled dedup leaves four A-empty observations in common_three and '
+                      'three in separate_pairs, so first-round cooccurrence is 1/5 versus 1/4 '
+                      'against the 1/4 two-lane reserve line.',
+        }
+
+
 if __name__ == '__main__':
     for scenario in run_workday():
         print('POINTWISE_SCENARIO ' + json.dumps(scenario, sort_keys=True))
+    print('POINTWISE_SCENARIO ' + json.dumps(run_pool_shift(), sort_keys=True))

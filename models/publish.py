@@ -5,6 +5,7 @@ from cohort.freeze import read_frozen_cohort
 from models.exchange import ModelEdition, decode_edition, encode_edition
 from models.frequency import count_frequencies
 from models.law import FrozenLaw, LawOrigin
+from models.pool import build_pool_cells, encode_pool_document, validate_cohort_selection
 from trials.batches import validate_identity
 
 
@@ -43,3 +44,19 @@ def read_publication(connection: sqlite3.Connection, model_id: str) -> ModelEdit
     if edition.law.model_id != model_id or edition.law.origin.cohort_id != row[0]:
         raise ValueError('stored edition does not match its publication identity')
     return edition
+
+
+def publish_pool(connection: sqlite3.Connection, cohort_ids: list[str] | tuple[str, ...]) -> str:
+    """Issue a V2 pooled document over at least two frozen cohorts of one source.
+
+    The document carries only cohort origins and aggregate evidence: per-inspection
+    identities, original observations, and link tokens remain in the source.
+    """
+    identities = validate_cohort_selection(cohort_ids, 2)
+    cohorts = [read_frozen_cohort(connection, identity) for identity in identities]
+    cohorts.sort(key=lambda cohort: cohort.cohort_id)
+    origins = tuple(
+        LawOrigin(cohort.cohort_id, cohort.provenance.revision_id, cohort.provenance.digest)
+        for cohort in cohorts
+    )
+    return encode_pool_document(origins, build_pool_cells(tuple(cohorts)))

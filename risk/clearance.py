@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from fractions import Fraction
 
-from models.law import FrozenLaw
+from models.law import ClassLaw, FrozenLaw
 from trials.offspring import ParentKind, validate_parent_kind
 
 
@@ -16,7 +16,12 @@ class ClearanceProbabilities:
 
 def eventual_clearance(law: FrozenLaw) -> ClearanceProbabilities:
     """Find the least fixed point of the two offspring generating functions."""
-    a_law, b_law = law.classes
+    return classes_clearance(law.classes)
+
+
+def classes_clearance(classes: tuple[ClassLaw, ClassLaw]) -> ClearanceProbabilities:
+    """Least fixed point for a pair of class laws, pooled or single-cohort."""
+    a_law, b_law = classes
     b_empty = b_law.probability(())
     b_single_a = b_law.probability(('A',))
 

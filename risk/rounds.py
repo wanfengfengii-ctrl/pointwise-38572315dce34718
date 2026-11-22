@@ -2,7 +2,7 @@ from collections import defaultdict
 from fractions import Fraction
 from functools import cache
 
-from models.law import FrozenLaw
+from models.law import ClassLaw, FrozenLaw
 from trials.offspring import ParentKind, validate_parent_kind
 
 Population = tuple[int, int]
@@ -19,12 +19,19 @@ def round_distribution(
 ) -> dict[Population, Fraction]:
     initial_kind = validate_parent_kind(initial_kind)
     validate_round(round_number)
+    return classes_round_distribution(law.classes, initial_kind, round_number)
+
+
+def classes_round_distribution(
+    classes: tuple[ClassLaw, ClassLaw], initial_kind: ParentKind, round_number: int
+) -> dict[Population, Fraction]:
+    """Round-by-round population distribution for a pair of class laws."""
     transitions = {
         row.parent_kind: tuple(
             ((combination.count('A'), combination.count('B')), probability)
             for combination, probability in row.frequencies if probability
         )
-        for row in law.classes
+        for row in classes
     }
 
     @cache
