@@ -1,0 +1,13 @@
+{
+  "batch_id": "day-shift",
+  "observations": [
+    {"inspection_id": "a-01", "parent_kind": "A", "offspring": []},
+    {"inspection_id": "a-02", "parent_kind": "A", "offspring": ["A", "B"]},
+    {"inspection_id": "a-03", "parent_kind": "A", "offspring": ["A", "B"]},
+    {"inspection_id": "a-04", "parent_kind": "A", "offspring": ["A", "B"]},
+    {"inspection_id": "b-01", "parent_kind": "B", "offspring": ["A"]}
+  ],
+  "correction": {"inspection_id": "a-04", "offspring": []},
+  "initial_kind": "A",
+  "reserve_threshold": [1, 8]
+}
